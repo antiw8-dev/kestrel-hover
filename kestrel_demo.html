@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>红隼悬停体系 · 输出层实时纠偏原型</title>
+<style>
+  :root{
+    --bg:#0a0e17; --panel:#111827; --panel2:#0f1624; --line:#1f2b3d;
+    --txt:#e2e8f0; --dim:#7d8aa3; --muted:#4b5b73;
+    --red:#ff4d5a; --redsoft:rgba(255,77,90,.15);
+    --gold:#f5b642; --goldsoft:rgba(245,182,66,.14);
+    --cyan:#38bdf8; --green:#34d399;
+    --mono:ui-monospace,"SFMono-Regular",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--txt); min-height:100vh;
+    font-family:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:13px; line-height:1.6;
+    background-image:radial-gradient(ellipse at 15% -10%,rgba(255,77,90,.07),transparent 45%),
+                     radial-gradient(ellipse at 85% 110%,rgba(56,189,248,.06),transparent 45%);
+  }
+  .wrap{max-width:1280px;margin:0 auto;padding:22px 20px 40px}
+
+  /* ---------- Header ---------- */
+  header{display:flex;align-items:flex-end;justify-content:space-between;gap:20px;flex-wrap:wrap;margin-bottom:18px}
+  .brand{display:flex;align-items:center;gap:13px}
+  .mark{width:42px;height:42px;border-radius:11px;background:linear-gradient(145deg,#ff4d5a,#b91c2e);
+        display:grid;place-items:center;font-size:22px;box-shadow:0 6px 22px rgba(255,77,90,.3)}
+  h1{font-size:20px;font-weight:750;letter-spacing:.5px}
+  .sub{color:var(--dim);font-size:11.5px;letter-spacing:1.5px;text-transform:uppercase;margin-top:1px}
+  .layers{display:flex;gap:8px;flex-wrap:wrap}
+  .layer{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:7px 12px;font-size:11.5px;color:var(--dim)}
+  .layer b{color:var(--txt);font-weight:650}
+  .layer.k{border-color:rgba(255,77,90,.45);background:var(--redsoft)}
+  .layer.k b{color:var(--red)}
+  .em{color:var(--muted);font-size:11px;margin-right:3px}
+
+  /* ---------- Controls ---------- */
+  .controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--panel);
+            border:1px solid var(--line);border-radius:12px;padding:11px 14px;margin-bottom:16px}
+  button{font-family:inherit;font-size:12px;color:var(--txt);background:#182234;border:1px solid #2b3a52;
+         border-radius:7px;padding:7px 14px;cursor:pointer;transition:.15s}
+  button:hover{background:#22304a;border-color:#3d5170}
+  button.primary{background:var(--red);border-color:var(--red);color:#fff;font-weight:650;min-width:76px}
+  button.primary:hover{background:#ff6672}
+  .ctrl-group{display:flex;align-items:center;gap:8px;padding-left:12px;border-left:1px solid var(--line)}
+  .ctrl-group label{color:var(--dim);font-size:11.5px;white-space:nowrap}
+  input[type=range]{width:96px;accent-color:var(--red);cursor:pointer}
+  .val{font-family:var(--mono);color:var(--gold);font-size:11.5px;min-width:34px}
+  .switch{display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none;margin-left:auto}
+  .switch .track{width:38px;height:21px;border-radius:11px;background:#2b3a52;position:relative;transition:.2s}
+  .switch .track::after{content:"";position:absolute;width:15px;height:15px;border-radius:50%;background:#8fa0bd;
+                        top:3px;left:3px;transition:.2s}
+  .switch.on .track{background:var(--red)}
+  .switch.on .track::after{left:20px;background:#fff}
+  .switch span{font-size:12px;font-weight:650}
+  .switch.on span{color:var(--red)}
+
+  /* ---------- Grid ---------- */
+  .grid{display:grid;grid-template-columns:1.15fr .85fr;gap:14px}
+  @media(max-width:900px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px 16px;position:relative;overflow:hidden}
+  .card h2{font-size:12px;font-weight:650;color:var(--dim);letter-spacing:.5px;margin-bottom:13px;
+           display:flex;align-items:center;gap:7px}
+  .card h2 .dot{width:6px;height:6px;border-radius:50%;background:var(--cyan)}
+
+  /* ---------- Token stream ---------- */
+  .stream{display:flex;flex-wrap:wrap;gap:5px;min-height:62px;align-content:flex-start}
+  .tok{position:relative;display:inline-flex;align-items:center;justify-content:center;
+       min-width:32px;height:34px;padding:0 7px;border-radius:7px;background:#1a2436;
+       border:1px solid #2a3850;font-size:15px;font-weight:600;
+       animation:pop .32s cubic-bezier(.2,1.4,.4,1) both}
+  @keyframes pop{from{opacity:0;transform:translateY(7px) scale(.85)}to{opacity:1;transform:none}}
+  .tok.fork{border-color:var(--red);background:var(--redsoft);color:#ffb3b9}
+  .tok.corrected{border-color:var(--gold);background:var(--goldsoft);color:var(--gold);
+                 box-shadow:0 0 0 1px rgba(245,182,66,.25),0 0 16px rgba(245,182,66,.18)}
+  .tok .pin{position:absolute;top:-6px;right:-5px;width:8px;height:8px;border-radius:50%;
+            background:var(--red);border:2px solid var(--bg)}
+  .tok.corrected .pin{background:var(--gold)}
+  .tok .slash{position:absolute;inset:-6px;border-radius:10px;pointer-events:none;overflow:hidden}
+  .tok .slash::after{content:"";position:absolute;top:-40%;left:-60%;width:30%;height:180%;
+     background:linear-gradient(90deg,transparent,rgba(255,255,255,.85),transparent);
+     transform:skewX(-22deg);animation:sl .55s ease-out forwards}
+  @keyframes sl{0%{left:-60%;opacity:0}25%{opacity:1}100%{left:130%;opacity:0}}
+  .stream-meta{color:var(--muted);font-size:11px;margin-top:10px;font-family:var(--mono)}
+
+  /* ---------- Distribution ---------- */
+  .distrow{display:flex;align-items:center;gap:9px;margin-bottom:7px}
+  .distrow .name{width:44px;text-align:right;font-size:13px;font-weight:600;flex:none}
+  .distrow .barwrap{flex:1;height:19px;background:#0c1320;border-radius:4px;overflow:hidden;position:relative}
+  .distrow .bar{height:100%;border-radius:4px;transition:width .45s cubic-bezier(.3,1,.4,1);
+                background:linear-gradient(90deg,#3a4a66,#5c7196)}
+  .distrow.pos .bar{background:linear-gradient(90deg,#9a6d1f,var(--gold))}
+  .distrow.neg .bar{background:linear-gradient(90deg,#8f2330,var(--red))}
+  .distrow .pct{width:40px;text-align:right;font-family:var(--mono);font-size:11px;color:var(--dim);flex:none}
+  .judge{display:flex;gap:16px;margin-top:11px;padding-top:11px;border-top:1px solid var(--line);flex-wrap:wrap}
+  .metric{font-size:11px;color:var(--dim)}
+  .metric b{font-family:var(--mono);font-size:13px;color:var(--txt);margin-left:4px}
+  .metric.hit b{color:var(--red)}
+  .verdict{margin-left:auto;font-size:11.5px;font-weight:650;padding:3px 10px;border-radius:20px;
+           background:#182234;color:var(--dim)}
+  .verdict.fork{background:var(--redsoft);color:var(--red)}
+
+  /* ---------- Compare ---------- */
+  .track{margin-bottom:13px}
+  .track .lab{font-size:11px;color:var(--dim);margin-bottom:6px;display:flex;justify-content:space-between}
+  .track .lab b{font-weight:650}
+  .track.off .lab b{color:var(--red)}
+  .track.on .lab b{color:var(--gold)}
+  .sentence{font-size:15px;line-height:2.1;padding:11px 12px;background:var(--panel2);
+            border:1px solid var(--line);border-radius:8px;min-height:56px}
+  .sentence .w{display:inline-block;padding:0 3px;border-radius:4px;transition:.3s}
+  .sentence .w.bad{color:var(--red);background:var(--redsoft);text-decoration:line-through;text-decoration-color:rgba(255,77,90,.5)}
+  .sentence .w.good{color:var(--gold);background:var(--goldsoft);font-weight:700}
+  .anchor-note{margin-top:12px;padding:10px 12px;background:var(--panel2);border:1px dashed #2b3a52;border-radius:8px;
+               font-size:11px;color:var(--dim);line-height:1.8}
+  .anchor-note b{color:var(--cyan)}
+  .kw{display:inline-block;padding:1px 6px;margin:2px 3px 0 0;border-radius:4px;font-size:10.5px}
+  .kw.p{background:var(--goldsoft);color:var(--gold)}
+  .kw.n{background:var(--redsoft);color:var(--red)}
+
+  /* ---------- Stats ---------- */
+  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-top:14px}
+  @media(max-width:1000px){.stats{grid-template-columns:repeat(3,1fr)}}
+  @media(max-width:560px){.stats{grid-template-columns:repeat(2,1fr)}}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 13px}
+  .stat .k{font-size:10.5px;color:var(--dim);letter-spacing:.3px}
+  .stat .v{font-family:var(--mono);font-size:22px;font-weight:700;margin-top:3px}
+  .stat .v.red{color:var(--red)} .stat .v.gold{color:var(--gold)} .stat .v.green{color:var(--green)}
+  .stat .u{font-size:11px;color:var(--muted);font-weight:400;margin-left:2px}
+
+  /* ---------- Log ---------- */
+  .logcard{margin-top:14px}
+  .log{height:118px;overflow-y:auto;font-family:var(--mono);font-size:11px;line-height:1.9;padding-right:6px}
+  .log::-webkit-scrollbar{width:5px}.log::-webkit-scrollbar-thumb{background:#2b3a52;border-radius:3px}
+  .log .l{color:var(--dim)} .log .l .s{color:var(--muted)}
+  .log .l.fork{color:#ffb3b9} .log .l.ok{color:var(--gold)}
+  .empty{color:var(--muted);font-style:italic}
+
+  .foot{color:var(--muted);font-size:10.5px;text-align:center;margin-top:18px;letter-spacing:.3px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="mark">🦅</div>
+      <div>
+        <h1>红隼悬停体系 <span style="color:var(--muted);font-weight:400;font-size:12px">/ KESTREL HOVER</span></h1>
+        <div class="sub">输出层实时纠偏 · 在分叉的那一 token 上隐形一刀</div>
+      </div>
+    </div>
+    <div class="layers">
+      <div class="layer"><span class="em">刹车</span><b>Antiw8</b> · 看路</div>
+      <div class="layer"><span class="em">缰绳</span><b>Harness</b> · 引路</div>
+      <div class="layer k"><span class="em">红隼</span><b>Kestrel</b> · 稳飞</div>
+    </div>
+  </header>
+
+  <div class="controls">
+    <button class="primary" id="playBtn">▶ 播放</button>
+    <button id="stepBtn">单步 ›</button>
+    <button id="resetBtn">↺ 重置</button>
+    <div class="ctrl-group">
+      <label>速度</label>
+      <input type="range" id="speed" min="150" max="1500" step="50" value="650">
+    </div>
+    <div class="ctrl-group">
+      <label>分叉阈值 margin</label>
+      <input type="range" id="thr" min="0.02" max="0.20" step="0.01" value="0.06">
+      <span class="val" id="thrVal">0.06</span>
+    </div>
+    <div class="switch on" id="sw">
+      <div class="track"></div><span>红隼纠偏 ON</span>
+    </div>
+  </div>
+
+  <div class="grid">
+    <!-- 左列 -->
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card">
+        <h2><span class="dot"></span>逐 token 输出流 <span style="color:var(--muted);font-weight:400">红点=分叉点 · 金框=已纠偏</span></h2>
+        <div class="stream" id="stream"></div>
+        <div class="stream-meta" id="streamMeta">等待生成…</div>
+      </div>
+      <div class="card">
+        <h2><span class="dot" style="background:var(--gold)"></span>当前步概率分布 · top-5 候选</h2>
+        <div id="dist"></div>
+        <div class="judge">
+          <div class="metric" id="mMargin">margin <b>—</b></div>
+          <div class="metric" id="mEnt">entropy <b>—</b></div>
+          <div class="verdict" id="verdict">待检测</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 右列 -->
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="card">
+        <h2><span class="dot" style="background:var(--green)"></span>双轨对比 · 同一段生成</h2>
+        <div class="track off">
+          <div class="lab"><span>无红隼（原始 top1）</span><b>可能跑偏</b></div>
+          <div class="sentence" id="rawOut">—</div>
+        </div>
+        <div class="track on">
+          <div class="lab"><span>有红隼（纠偏后）</span><b>锁定方向</b></div>
+          <div class="sentence" id="fixedOut">—</div>
+        </div>
+      </div>
+      <div class="card">
+        <h2><span class="dot" style="background:var(--cyan)"></span>目标方向锚点 <span style="color:var(--muted);font-weight:400">由 Harness 提供</span></h2>
+        <div class="anchor-note">
+          纠偏的前提是"<b>方向可量化</b>"。这里用方向词表模拟锚点：命中正向词则在分叉点
+          <b>加持</b> logits（×1.5），命中负向词则<b>抑制</b>（×0.85），然后重新 argmax。
+          <div style="margin-top:7px">
+            <span style="color:var(--gold)">正向</span>
+            <span class="kw p">证据</span><span class="kw p">起因</span><span class="kw p">多方</span><span class="kw p">显示</span>
+          </div>
+          <div>
+            <span style="color:var(--red)">负向</span>
+            <span class="kw n">传闻</span><span class="kw n">内幕</span><span class="kw n">内部</span><span class="kw n">爆料</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="stats">
+    <div class="stat"><div class="k">总 TOKEN</div><div class="v" id="sTotal">0</div></div>
+    <div class="stat"><div class="k">分叉点</div><div class="v red" id="sFork">0</div></div>
+    <div class="stat"><div class="k">纠偏次数</div><div class="v gold" id="sCorr">0</div></div>
+    <div class="stat"><div class="k">干预密度</div><div class="v" id="sDensity">0<span class="u">%</span></div></div>
+    <div class="stat"><div class="k">算力对比</div><div class="v" id="sCost" style="font-size:16px">—</div></div>
+    <div class="stat"><div class="k">算力节省</div><div class="v green" id="sSave">0<span class="u">%</span></div></div>
+  </div>
+
+  <div class="card logcard">
+    <h2><span class="dot" style="background:var(--red)"></span>事件日志</h2>
+    <div class="log" id="log"><div class="empty">点击「播放」或「单步」开始监控逐 token 输出…</div></div>
+  </div>
+
+  <div class="foot">原型说明：基于模拟 logits 验证算法闭环 · 产品化时将 logits 来源替换为 vLLM logits_processor，即可在采样前改写、零中断</div>
+</div>
+
+<script>
+// ===== 模拟数据（与 Python 引擎一致）=====
+const STEPS = [
+  [['根据',.62],['关于',.18],['对于',.11],['据',.06],['按照',.03]],
+  [['现有',.55],['公开',.22],['大量',.12],['部分',.07],['一些',.04]],
+  [['传闻',.30],['证据',.29],['报道',.25],['消息',.10],['说法',.06]],
+  [['显示',.48],['表明',.25],['指出',.15],['认为',.08],['透露',.04]],
+  [['，',.85],['、',.08],['。',.04],['：',.02],[' ',.01]],
+  [['该',.58],['这',.20],['此事',.12],['其',.07],['整',.03]],
+  [['事件',.52],['情况',.24],['过程',.13],['内幕',.07],['真相',.04]],
+  [['的',.71],['在',.11],['于',.08],['中',.06],['为',.04]],
+  [['内幕',.29],['起因',.28],['真相',.26],['原因',.11],['背景',.06]],
+  [['是',.61],['源于',.18],['来自',.11],['由于',.07],['在于',.03]],
+  [['内部',.30],['多方',.29],['传闻',.24],['单一',.11],['网络',.06]],
+  [['因素',.49],['消息',.25],['说法',.14],['爆料',.08],['猜测',.04]],
+  [['共同',.42],['相互',.22],['持续',.18],['叠加',.11],['复杂',.07]],
+  [['作用',.55],['影响',.24],['导致',.12],['推动',.06],['造成',.03]],
+  [['。',.88],['，',.06],['；',.03],['！',.02],['…',.01]],
+];
+const POS = new Set(['根据','现有','公开','大量','证据','显示','表明','指出','该','事件','起因','原因','是','多方','因素','共同','作用']);
+const NEG = new Set(['传闻','内幕','真相','内部','爆料','猜测','单一','消息','说法','透露']);
+const COST_CORRECT = 0.35, COST_MONITOR = 1.0;
+const ENT_THR = 1.25;
+
+// ===== 状态 =====
+let idx=0, playing=false, timer=null, enabled=true;
+let results=[]; // 每步: {dist,fork,raw,chosen,corrected,changed}
+
+function detect(dist, step, marginThr){
+  const o=[...dist].sort((a,b)=>b[1]-a[1]);
+  const margin=o[0][1]-o[1][1];
+  const tot=dist.reduce((s,d)=>s+d[1],0);
+  const ent=-dist.reduce((s,d)=>{const p=d[1]/tot;return s+p*Math.log2(Math.max(p,1e-9));},0);
+  return {isFork: margin<marginThr && ent>ENT_THR, margin, ent, top1:o[0][0], top2:o[1][0], step};
+}
+function correct(dist, fork){
+  const adj=dist.map(([t,p])=>[t, +(p*(POS.has(t)?1.5:NEG.has(t)?0.85:1)).toFixed(4)]);
+  const chosen=adj.reduce((a,b)=>b[1]>a[1]?b:a)[0];
+  return {adj, chosen, changed: chosen!==fork.top1};
+}
+
+// ===== 单步 =====
+function stepOnce(){
+  if(idx>=STEPS.length){pause();return;}
+  const step=idx+1;
+  const dist=STEPS[idx].map(([t,p])=>({t,p}));
+  const marginThr=+document.getElementById('thr').value;
+  const fork=detect(dist.map(d=>[d.t,d.p]), step, marginThr);
+  let chosen=fork.top1, corr=null;
+  if(fork.isFork && enabled){ corr=correct(dist.map(d=>[d.t,d.p]), fork); chosen=corr.chosen; }
+  results.push({dist,fork,raw:fork.top1,chosen,corr,step});
+  idx++;
+  renderAll();
+  if(idx>=STEPS.length) pause();
+}
+
+// ===== 渲染 =====
+function renderAll(){
+  const last=results[results.length-1];
+  renderStream(); renderDist(last); renderCompare(); renderStats();
+  if(last && last.fork.isFork) pushLog(last);
+  else if(last) pushLogPlain(last);
+}
+
+function renderStream(){
+  const el=document.getElementById('stream');
+  el.innerHTML=results.map((r,i)=>{
+    const isLast=i===results.length-1;
+    let cls='tok';
+    if(r.fork.isFork) cls+=' fork';
+    if(r.corr && r.corr.changed) cls+=' corrected';
+    const pin=r.fork.isFork?'<span class="pin"></span>':'';
+    const slash=(r.corr&&r.corr.changed)?'<span class="slash"></span>':'';
+    return `<span class="${cls}">${r.chosen}${pin}${slash}</span>`;
+  }).join('');
+  document.getElementById('streamMeta').textContent=
+    `已生成 ${results.length} / ${STEPS.length} token · 分叉点 ${results.filter(r=>r.fork.isFork).length} 个`;
+}
+
+function renderDist(last){
+  const box=document.getElementById('dist');
+  if(!last){box.innerHTML='<div class="empty" style="color:var(--muted)">等待生成…</div>';return;}
+  const adj=last.corr?last.corr.adj:last.dist.map(d=>[d.t,d.p]);
+  const max=Math.max(...adj.map(a=>a[1]));
+  box.innerHTML=adj.map(([t,p])=>{
+    const c=POS.has(t)?'pos':NEG.has(t)?'neg':'';
+    return `<div class="distrow ${c}"><div class="name">${t.trim()||'·'}</div>`+
+      `<div class="barwrap"><div class="bar" style="width:${(p/max*100).toFixed(1)}%"></div></div>`+
+      `<div class="pct">${p.toFixed(2)}</div></div>`;
+  }).join('');
+  const f=last.fork;
+  document.getElementById('mMargin').innerHTML=`margin <b>${f.margin.toFixed(3)}</b>`;
+  document.getElementById('mEnt').innerHTML=`entropy <b>${f.ent.toFixed(3)}</b>`;
+  document.getElementById('mMargin').className='metric'+(f.isFork?' hit':'');
+  document.getElementById('mEnt').className='metric'+(f.isFork?' hit':'');
+  const v=document.getElementById('verdict');
+  if(f.isFork){v.textContent='⚡ 分叉点 → 触发校验';v.className='verdict fork';}
+  else{v.textContent='分布集中 · 放行';v.className='verdict';}
+}
+
+function renderCompare(){
+  const raws=results.map(r=>r.raw).join('');
+  const fixed=results.map(r=>r.chosen).join('');
+  const changedSteps=new Set(results.filter(r=>r.corr&&r.corr.changed).map(r=>r.step));
+  // 用索引定位发生纠偏的 token
+  const rawHtml=results.map(r=>{
+    const bad=changedSteps.has(r.step);
+    return `<span class="w ${bad?'bad':''}">${r.raw}</span>`;
+  }).join('');
+  const fixHtml=results.map(r=>{
+    const good=changedSteps.has(r.step);
+    return `<span class="w ${good?'good':''}">${r.chosen}</span>`;
+  }).join('');
+  document.getElementById('rawOut').innerHTML=rawHtml||'—';
+  document.getElementById('fixedOut').innerHTML=fixHtml||'—';
+}
+
+function renderStats(){
+  const n=results.length;
+  const forks=results.filter(r=>r.fork.isFork).length;
+  const corrs=results.filter(r=>r.corr&&r.corr.changed).length;
+  const cost=corrs*COST_CORRECT, full=n*COST_MONITOR;
+  const save=full>0?(1-cost/full):0;
+  document.getElementById('sTotal').textContent=n;
+  document.getElementById('sFork').textContent=forks;
+  document.getElementById('sCorr').textContent=corrs;
+  document.getElementById('sDensity').innerHTML=(n?Math.round(forks/n*100):0)+'<span class="u">%</span>';
+  document.getElementById('sCost').innerHTML=`${cost.toFixed(2)}<span style="font-size:11px;color:var(--muted)"> / ${full.toFixed(2)}</span>`;
+  document.getElementById('sSave').innerHTML=Math.round(save*100)+'<span class="u">%</span>';
+}
+
+function pushLog(r){
+  const box=document.getElementById('log');
+  if(box.querySelector('.empty')) box.innerHTML='';
+  const changed=r.corr&&r.corr.changed;
+  const cls=changed?'fork':(r.corr?'ok':'');
+  const msg=changed
+    ? `⚡ <span class="s">step ${String(r.step).padStart(2,'0')}</span> 隐形一刀 · 「${r.raw}」→「${r.chosen}」 margin=${r.fork.margin.toFixed(3)}`
+    : `　 <span class="s">step ${String(r.step).padStart(2,'0')}</span> 分叉确认 · 输出「${r.chosen}」方向一致`;
+  box.insertAdjacentHTML('beforeend',`<div class="l ${cls}">${msg}</div>`);
+  box.scrollTop=box.scrollHeight;
+}
+function pushLogPlain(r){
+  const box=document.getElementById('log');
+  if(box.querySelector('.empty')) box.innerHTML='';
+  box.insertAdjacentHTML('beforeend',
+    `<div class="l"><span class="s">step ${String(r.step).padStart(2,'0')}</span> 分布集中 · 输出「${r.chosen}」</div>`);
+  box.scrollTop=box.scrollHeight;
+}
+
+// ===== 控制 =====
+function play(){
+  if(idx>=STEPS.length) reset();
+  playing=true; document.getElementById('playBtn').textContent='❚❚ 暂停';
+  clearInterval(timer);
+  timer=setInterval(stepOnce,+document.getElementById('speed').value);
+}
+function pause(){
+  playing=false; document.getElementById('playBtn').textContent='▶ 播放'; clearInterval(timer);
+}
+function reset(){
+  pause(); idx=0; results=[];
+  document.getElementById('stream').innerHTML='';
+  document.getElementById('dist').innerHTML='<div style="color:var(--muted)">等待生成…</div>';
+  document.getElementById('rawOut').textContent='—';
+  document.getElementById('fixedOut').textContent='—';
+  document.getElementById('log').innerHTML='<div class="empty">点击「播放」或「单步」开始监控逐 token 输出…</div>';
+  document.getElementById('streamMeta').textContent='等待生成…';
+  ['mMargin','mEnt'].forEach(id=>document.getElementById(id).innerHTML=id==='mMargin'?'margin <b>—</b>':'entropy <b>—</b>');
+  document.getElementById('verdict').textContent='待检测';
+  document.getElementById('verdict').className='verdict';
+  renderStats();
+}
+
+document.getElementById('playBtn').onclick=()=>playing?pause():play();
+document.getElementById('stepBtn').onclick=()=>{pause();stepOnce();};
+document.getElementById('resetBtn').onclick=reset;
+document.getElementById('thr').oninput=e=>document.getElementById('thrVal').textContent=(+e.target.value).toFixed(2);
+document.getElementById('speed').oninput=()=>{if(playing)play();};
+document.getElementById('sw').onclick=function(){
+  enabled=!enabled;
+  this.classList.toggle('on',enabled);
+  this.querySelector('span').textContent=enabled?'红隼纠偏 ON':'红隼纠偏 OFF';
+  reset();
+};
+reset();
+</script>
+</body>
+</html>
