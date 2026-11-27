@@ -111,6 +111,20 @@ Watch token-by-token generation in real time:
 
 **Note:** The demo visualises the Engine Mode algorithm with simulated logits for illustration purposes. It demonstrates what Engine Mode *would do* when integrated with a real inference engine.
 
+## FAQ
+
+**Q: What is Kestrel-Hover?**
+A: An output-layer stabilization protocol: instead of monitoring every token, detect the fork points (where the model hesitates between continuations), correct once, and hold steady.
+
+**Q: Do I need vLLM or an inference engine to use it?**
+A: Not for Prompt Mode (v0.1) — it is a behavioral system prompt, copy-paste, works with any chat model. Engine Mode (real logit-level correction) requires inference engine integration and is on the roadmap.
+
+**Q: Is the ~93% compute saving a measured benchmark?**
+A: No — it is a cost-model estimate from simulated tests, clearly marked in this README. Prompt Mode does not access real token probabilities; it induces deliberate self-checking behavior.
+
+**Q: How does it differ from DExperts / Contrastive Decoding / Activation Steering?**
+A: Single-model, fork-gated (only ~20% of token positions), lightweight logit bias — see the Related Work section above for a point-by-point comparison.
+
 ## Quick Start
 
 ### Prompt Mode (zero code, works now)
